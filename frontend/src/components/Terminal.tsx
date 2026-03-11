@@ -15,6 +15,14 @@ const lineColor: Record<TerminalLine["type"], string> = {
   info: "#d29922",
 };
 
+function conflictLineColor(line: string): string | null {
+  if (line.startsWith("<<<<<<<")) return "#f85149";
+  if (line.startsWith("=======")) return "#d29922";
+  if (line.startsWith(">>>>>>>")) return "#3fb950";
+  if (line.startsWith("CONFLICT")) return "#f85149";
+  return null;
+}
+
 export function Terminal({ lines, onCommand, disabled = false }: TerminalProps) {
   const [input, setInput] = useState("");
   const [historyIndex, setHistoryIndex] = useState(-1);
@@ -102,7 +110,11 @@ export function Terminal({ lines, onCommand, disabled = false }: TerminalProps) 
                 wordBreak: "break-all",
               }}
             >
-              {line.text}
+              {line.text.split("\n").map((l, j) => (
+                <span key={j} style={{ display: "block", color: conflictLineColor(l) ?? lineColor[line.type] }}>
+                  {l}
+                </span>
+              ))}
             </span>
           </div>
         ))}

@@ -1,5 +1,5 @@
 import hashlib
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 from copy import deepcopy
 
 from ..models.schemas import Commit, GitState
@@ -73,6 +73,35 @@ def reset_session(session_id: str) -> GitState:
     return sessions[session_id]
 
 
+# --- Helper functions ---
+
+def _get_branch_committed_files(state: GitState, branch_name: str) -> Set[str]:
+    """Get files committed in commits that belong specifically to this branch."""
+    files: Set[str] = set()
+    for commit in state.commits:
+        if commit.branch == branch_name:
+            parts = commit.message.split("||files||")
+            if len(parts) > 1:
+                for item in parts[1].split(","):
+                    item = item.strip()
+                    if item:
+                        files.add(item)
+    return files
+
+
+def _get_committed_files(state: GitState) -> List[str]:
+    """Get all committed files across all branches (for untracked detection)."""
+    files: List[str] = []
+    for commit in state.commits:
+        parts = commit.message.split("||files||")
+        if len(parts) > 1:
+            for item in parts[1].split(","):
+                item = item.strip()
+                if item:
+                    files.append(item)
+    return files
+
+
 # --- Git command implementations ---
 
 def _git_init(session_id: str, state: GitState, args: List[str]) -> Tuple[str, bool, GitState]:
@@ -91,6 +120,22 @@ def _git_status(session_id: str, state: GitState, args: List[str]) -> Tuple[str,
 
     lines = [f"On branch {state.current_branch}", ""]
     has_head = bool(state.branches.get(state.current_branch))
+
+    # Conflict state
+    if state.conflicted_files:
+        lines.append("マージの途中です。コンフリクトを解消してください。")
+        lines.append('  (use "git add <file>..." to mark resolution)')
+        lines.append("")
+        lines.append("Unmerged paths:")
+        for f in state.conflicted_files:
+            lines.append(f"\t\tboth modified:   {f}")
+        lines.append("")
+        if state.staged_files:
+            lines.append("Changes to be committed:")
+            for f in state.staged_files:
+                lines.append(f"\t\tmodified:   {f}")
+            lines.append("")
+        return ("\n".join(lines), True, state)
 
     if not has_head:
         lines.append("No commits yet")
@@ -119,17 +164,6 @@ def _git_status(session_id: str, state: GitState, args: List[str]) -> Tuple[str,
     return ("\n".join(lines), True, state)
 
 
-def _get_committed_files(state: GitState) -> List[str]:
-    files: List[str] = []
-    for commit in state.commits:
-        for f in commit.message.split("||files||")[-1:]:
-            for item in f.split(","):
-                item = item.strip()
-                if item:
-                    files.append(item)
-    return files
-
-
 def _git_add(session_id: str, state: GitState, args: List[str]) -> Tuple[str, bool, GitState]:
     if not state.initialized:
         return ("fatal: not a git repository", False, state)
@@ -137,6 +171,15 @@ def _git_add(session_id: str, state: GitState, args: List[str]) -> Tuple[str, bo
         return ("Nothing specified, nothing added.", False, state)
 
     target = args[0]
+
+    # Conflict resolution: adding a conflicted file marks it as resolved
+    if target in state.conflicted_files:
+        state.conflicted_files.remove(target)
+        if target not in state.staged_files:
+            state.staged_files.append(target)
+        output = f"コンフリクト解消: '{target}' を解消済みとしてマークしました"
+        return (output, True, state)
+
     if target == ".":
         files_to_add = [f for f in state.working_files if f not in state.staged_files]
     elif target in state.working_files:
@@ -153,26 +196,52 @@ def _git_add(session_id: str, state: GitState, args: List[str]) -> Tuple[str, bo
 def _git_commit(session_id: str, state: GitState, args: List[str]) -> Tuple[str, bool, GitState]:
     if not state.initialized:
         return ("fatal: not a git repository", False, state)
+
+    # Completing a merge commit
+    if state.merge_in_progress_branch:
+        if state.conflicted_files:
+            return (
+                f"error: コンフリクトが残っています: {', '.join(state.conflicted_files)}\n"
+                "先に git add でコンフリクトを解消してください",
+                False, state
+            )
+        # Create merge commit
+        merge_branch = state.merge_in_progress_branch
+        current_head = state.branches.get(state.current_branch)
+        content = f"MergeCommit:{merge_branch}:{state.current_branch}:{current_head}"
+        commit_id = hashlib.sha1(content.encode()).hexdigest()
+        files_str = ",".join(sorted(state.staged_files))
+        commit = Commit(
+            id=commit_id,
+            message=f"Merge branch '{merge_branch}' into {state.current_branch}||files||{files_str}",
+            parent_id=current_head,
+            branch=state.current_branch,
+        )
+        state.commits.append(commit)
+        state.branches[state.current_branch] = commit_id
+        state.staged_files = []
+        state.merge_in_progress_branch = None
+        output = (
+            f"[{state.current_branch} {short_id(commit_id)}] "
+            f"Merge branch '{merge_branch}' into {state.current_branch}\nマージが完了しました！"
+        )
+        return (output, True, state)
+
     if not state.staged_files:
         return ("nothing to commit, working tree clean", False, state)
 
     message = "Commit"
-    raw_args = " ".join(args)
     if "-m" in args:
         m_idx = args.index("-m")
         if m_idx + 1 < len(args):
             message = " ".join(args[m_idx + 1:]).strip("\"'")
-    elif '"-m"' in raw_args or "'-m'" in raw_args:
-        pass  # already handled
 
     parent_id = state.branches.get(state.current_branch)
     files_str = ",".join(sorted(state.staged_files))
     content = f"{message}|{parent_id}|{files_str}"
     commit_id = hashlib.sha1(content.encode()).hexdigest()
 
-    # Store staged files in commit message for tracking (simplified)
     stored_message = f"{message}||files||{files_str}"
-
     commit = Commit(
         id=commit_id,
         message=stored_message,
@@ -218,7 +287,6 @@ def _git_checkout(session_id: str, state: GitState, args: List[str], subcmd: str
     if not args:
         return ("fatal: ブランチ名を指定してください", False, state)
 
-    # git checkout -b <branch>
     if args[0] == "-b" and len(args) > 1:
         branch_name = args[1]
         if branch_name in state.branches:
@@ -243,8 +311,7 @@ def _git_checkout(session_id: str, state: GitState, args: List[str], subcmd: str
         state.branches[state.current_branch] = None
 
     state.current_branch = branch_name
-    label = "切り替えました" if subcmd == "switch" else f"Switched to branch '{branch_name}'"
-    output = f"ブランチ '{branch_name}' に{label}" if subcmd == "switch" else label
+    output = f"ブランチ '{branch_name}' に切り替えました"
     return (output, True, state)
 
 
@@ -253,6 +320,8 @@ def _git_merge(session_id: str, state: GitState, args: List[str]) -> Tuple[str, 
         return ("fatal: not a git repository", False, state)
     if not args:
         return ("fatal: ブランチ名を指定してください", False, state)
+    if state.conflicted_files:
+        return ("error: コンフリクトが残っています。先に解消してください", False, state)
 
     branch_to_merge = args[0]
     if branch_to_merge not in state.branches:
@@ -265,6 +334,36 @@ def _git_merge(session_id: str, state: GitState, args: List[str]) -> Tuple[str, 
     if merge_head == current_head:
         return ("Already up to date.", True, state)
 
+    # Detect conflicts: files committed in both branches
+    current_files = _get_branch_committed_files(state, state.current_branch)
+    merge_files = _get_branch_committed_files(state, branch_to_merge)
+    conflicts = sorted(current_files & merge_files)
+
+    if conflicts:
+        state.conflicted_files = conflicts
+        state.merge_in_progress_branch = branch_to_merge
+
+        conflict_display = "\n".join([
+            f"<<<<<<< HEAD  ({state.current_branch} の変更)",
+            f"  Hello from {state.current_branch} branch",
+            "=======",
+            f"  Hello from {branch_to_merge} branch",
+            f">>>>>>> {branch_to_merge}",
+        ])
+
+        output = (
+            f"Auto-merging {conflicts[0]}\n"
+            f"CONFLICT (content): Merge conflict in {conflicts[0]}\n"
+            f"Automatic merge failed; fix conflicts and then commit the result.\n\n"
+            f"━━━ {conflicts[0]} の内容 ━━━\n"
+            f"{conflict_display}\n\n"
+            f"どちらかを採用（または両方を組み合わせ）して編集した後:\n"
+            f"  git add {conflicts[0]}  ← 解消済みとしてマーク\n"
+            f"  git commit             ← マージを完了"
+        )
+        return (output, False, state)
+
+    # No conflict: fast-forward or normal merge
     content = f"Merge:{branch_to_merge}:{state.current_branch}:{current_head}:{merge_head}"
     commit_id = hashlib.sha1(content.encode()).hexdigest()
     commit = Commit(

@@ -16,6 +16,8 @@ class GitState(BaseModel):
     commits: List[Commit] = []
     staged_files: List[str] = []
     working_files: List[str] = []
+    conflicted_files: List[str] = []
+    merge_in_progress_branch: Optional[str] = None
 
 
 class CommandRequest(BaseModel):
