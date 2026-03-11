@@ -4,7 +4,9 @@ import type {
   Lesson,
 } from "../types";
 
-const BASE = "/api";
+const BASE = typeof window !== 'undefined' && window.location.hostname === 'localhost'
+  ? "http://localhost:8000/api"
+  : "/api";
 
 export async function createSession(): Promise<{ session_id: string; git_state: GitState }> {
   const res = await fetch(`${BASE}/session/new`, { method: "POST" });
@@ -53,6 +55,31 @@ export async function fetchHint(
   });
   const data = await res.json();
   return data.hint;
+}
+
+export async function writeFile(
+  sessionId: string,
+  filename: string,
+  content: string
+): Promise<{ ok: boolean; git_state: GitState }> {
+  const res = await fetch(`${BASE}/file/write`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session_id: sessionId, filename, content }),
+  });
+  return res.json();
+}
+
+export async function deleteFile(
+  sessionId: string,
+  filename: string
+): Promise<{ ok: boolean; git_state: GitState }> {
+  const res = await fetch(`${BASE}/file/delete`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session_id: sessionId, filename }),
+  });
+  return res.json();
 }
 
 export async function explainCommand(command: string): Promise<string> {

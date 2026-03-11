@@ -12,6 +12,9 @@ export interface GitState {
   commits: Commit[];
   staged_files: string[];
   working_files: string[];
+  conflicted_files: string[];
+  merge_in_progress_branch: string | null;
+  file_contents: Record<string, string>;
 }
 
 export interface LessonStep {
@@ -21,6 +24,7 @@ export interface LessonStep {
   expected_command_prefix: string;
   explanation: string;
   adds_files: string[];
+  initial_file_contents: Record<string, string>;
 }
 
 export interface Lesson {

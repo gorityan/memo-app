@@ -8,6 +8,8 @@ from ..models.schemas import (
     ExplainRequest,
     ExplainResponse,
     SessionResponse,
+    FileWriteRequest,
+    FileDeleteRequest,
 )
 from ..services import git_simulator, claude_service
 from .lessons import LESSONS
@@ -56,8 +58,12 @@ def run_command(req: CommandRequest):
         step_completed = correct
 
         # Add files needed for next step when this step completes
-        if step_completed and step.adds_files:
-            git_state = git_simulator.add_working_files(req.session_id, step.adds_files)
+        if step_completed:
+            if step.adds_files:
+                git_state = git_simulator.add_working_files(req.session_id, step.adds_files)
+            if step.initial_file_contents:
+                for filename, content in step.initial_file_contents.items():
+                    git_state = git_simulator.set_file_content(req.session_id, filename, content)
 
     return CommandResponse(
         output=output,
@@ -66,6 +72,18 @@ def run_command(req: CommandRequest):
         step_completed=step_completed,
         git_state=git_state,
     )
+
+
+@router.post("/file/write")
+def write_file_endpoint(req: FileWriteRequest):
+    state = git_simulator.set_file_content(req.session_id, req.filename, req.content)
+    return {"ok": True, "git_state": state}
+
+
+@router.post("/file/delete")
+def delete_file_endpoint(req: FileDeleteRequest):
+    state = git_simulator.remove_file(req.session_id, req.filename)
+    return {"ok": True, "git_state": state}
 
 
 @router.post("/ai/hint", response_model=HintResponse)

@@ -18,6 +18,9 @@ class GitState(BaseModel):
     working_files: List[str] = []
     conflicted_files: List[str] = []
     merge_in_progress_branch: Optional[str] = None
+    file_contents: Dict[str, str] = {}
+    branch_committed_content: Dict[str, Dict[str, str]] = {}
+    staged_content: Dict[str, str] = {}
 
 
 class CommandRequest(BaseModel):
@@ -59,6 +62,17 @@ class SessionResponse(BaseModel):
     git_state: GitState
 
 
+class FileWriteRequest(BaseModel):
+    session_id: str
+    filename: str
+    content: str
+
+
+class FileDeleteRequest(BaseModel):
+    session_id: str
+    filename: str
+
+
 class LessonStep(BaseModel):
     id: int
     instruction: str
@@ -66,6 +80,7 @@ class LessonStep(BaseModel):
     expected_command_prefix: str
     explanation: str
     adds_files: List[str] = []
+    initial_file_contents: Dict[str, str] = {}
 
 
 class Lesson(BaseModel):

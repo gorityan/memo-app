@@ -68,9 +68,35 @@ def add_working_files(session_id: str, files: List[str]) -> GitState:
     return state
 
 
+def set_file_content(session_id: str, filename: str, content: str) -> GitState:
+    state = get_or_create_session(session_id)
+    state.file_contents[filename] = content
+    if filename not in state.working_files:
+        state.working_files.append(filename)
+    sessions[session_id] = state
+    return state
+
+
 def reset_session(session_id: str) -> GitState:
     sessions[session_id] = GitState()
     return sessions[session_id]
+
+
+def remove_file(session_id: str, filename: str) -> GitState:
+    state = get_or_create_session(session_id)
+    if filename in state.working_files:
+        state.working_files.remove(filename)
+    state.file_contents.pop(filename, None)
+    if filename in state.staged_files:
+        state.staged_files.remove(filename)
+    state.staged_content.pop(filename, None)
+    if filename in state.conflicted_files:
+        state.conflicted_files.remove(filename)
+    # Remove from committed content to avoid resurrecting when switching branches
+    for branch_content in state.branch_committed_content.values():
+        branch_content.pop(filename, None)
+    sessions[session_id] = state
+    return state
 
 
 # --- Helper functions ---
@@ -111,6 +137,7 @@ def _git_init(session_id: str, state: GitState, args: List[str]) -> Tuple[str, b
     state.current_branch = "main"
     state.branches = {}
     state.working_files = ["README.md"]
+    state.file_contents["README.md"] = "# My Project\n\nWelcome to Git Dojo!"
     return ("Initialized empty Git repository in /myproject/.git/", True, state)
 
 
@@ -190,6 +217,8 @@ def _git_add(session_id: str, state: GitState, args: List[str]) -> Tuple[str, bo
     for f in files_to_add:
         if f not in state.staged_files:
             state.staged_files.append(f)
+        # Capture current file content into staged_content
+        state.staged_content[f] = state.file_contents.get(f, "")
     return ("", True, state)
 
 
@@ -220,6 +249,7 @@ def _git_commit(session_id: str, state: GitState, args: List[str]) -> Tuple[str,
         state.commits.append(commit)
         state.branches[state.current_branch] = commit_id
         state.staged_files = []
+        state.staged_content = {}
         state.merge_in_progress_branch = None
         output = (
             f"[{state.current_branch} {short_id(commit_id)}] "
@@ -251,7 +281,16 @@ def _git_commit(session_id: str, state: GitState, args: List[str]) -> Tuple[str,
     state.commits.append(commit)
     state.branches[state.current_branch] = commit_id
     n_files = len(state.staged_files)
+
+    # Save staged_content to branch_committed_content
+    branch = state.current_branch
+    if branch not in state.branch_committed_content:
+        state.branch_committed_content[branch] = {}
+    for f in state.staged_files:
+        state.branch_committed_content[branch][f] = state.staged_content.get(f, "")
+
     state.staged_files = []
+    state.staged_content = {}
 
     output = f"[{state.current_branch} {short_id(commit_id)}] {message}\n {n_files} file(s) changed"
     return (output, True, state)
@@ -278,6 +317,13 @@ def _git_branch(session_id: str, state: GitState, args: List[str]) -> Tuple[str,
     if state.current_branch not in state.branches:
         state.branches[state.current_branch] = current_head
     state.branches[branch_name] = current_head
+    
+    # Copy parent branch's committed content to new branch
+    if state.current_branch in state.branch_committed_content:
+        state.branch_committed_content[branch_name] = dict(state.branch_committed_content[state.current_branch])
+    else:
+        state.branch_committed_content[branch_name] = {}
+    
     return (f"ブランチ '{branch_name}' を作成しました", True, state)
 
 
@@ -295,6 +341,13 @@ def _git_checkout(session_id: str, state: GitState, args: List[str], subcmd: str
         if state.current_branch not in state.branches:
             state.branches[state.current_branch] = current_head
         state.branches[branch_name] = current_head
+        
+        # Copy parent branch's committed content to new branch
+        if state.current_branch in state.branch_committed_content:
+            state.branch_committed_content[branch_name] = dict(state.branch_committed_content[state.current_branch])
+        else:
+            state.branch_committed_content[branch_name] = {}
+        
         state.current_branch = branch_name
         return (f"ブランチ '{branch_name}' に切り替えました (新規作成)", True, state)
 
@@ -311,6 +364,14 @@ def _git_checkout(session_id: str, state: GitState, args: List[str], subcmd: str
         state.branches[state.current_branch] = None
 
     state.current_branch = branch_name
+    
+    # Restore file_contents to match this branch's committed files
+    # If branch has committed content, use it; otherwise keep uncommitted files
+    if branch_name in state.branch_committed_content:
+        state.file_contents = dict(state.branch_committed_content[branch_name])
+        state.working_files = sorted(state.file_contents.keys())
+    # else: keep current working files (uncommitted state)
+    
     output = f"ブランチ '{branch_name}' に切り替えました"
     return (output, True, state)
 
@@ -343,22 +404,30 @@ def _git_merge(session_id: str, state: GitState, args: List[str]) -> Tuple[str, 
         state.conflicted_files = conflicts
         state.merge_in_progress_branch = branch_to_merge
 
-        conflict_display = "\n".join([
-            f"<<<<<<< HEAD  ({state.current_branch} の変更)",
-            f"  Hello from {state.current_branch} branch",
-            "=======",
-            f"  Hello from {branch_to_merge} branch",
-            f">>>>>>> {branch_to_merge}",
-        ])
+        # Build real conflict markers from branch_committed_content
+        current_branch = state.current_branch
+        for conflict_file in conflicts:
+            current_content = state.branch_committed_content.get(current_branch, {}).get(conflict_file, "")
+            merge_content = state.branch_committed_content.get(branch_to_merge, {}).get(conflict_file, "")
+            state.file_contents[conflict_file] = (
+                f"<<<<<<< HEAD  ({current_branch} の変更)\n"
+                f"{current_content}\n"
+                f"=======\n"
+                f"{merge_content}\n"
+                f">>>>>>> {branch_to_merge}"
+            )
+
+        first_conflict = conflicts[0]
+        conflict_display = state.file_contents.get(first_conflict, "")
 
         output = (
-            f"Auto-merging {conflicts[0]}\n"
-            f"CONFLICT (content): Merge conflict in {conflicts[0]}\n"
+            f"Auto-merging {first_conflict}\n"
+            f"CONFLICT (content): Merge conflict in {first_conflict}\n"
             f"Automatic merge failed; fix conflicts and then commit the result.\n\n"
-            f"━━━ {conflicts[0]} の内容 ━━━\n"
+            f"━━━ {first_conflict} の内容 ━━━\n"
             f"{conflict_display}\n\n"
             f"どちらかを採用（または両方を組み合わせ）して編集した後:\n"
-            f"  git add {conflicts[0]}  ← 解消済みとしてマーク\n"
+            f"  git add {first_conflict}  ← 解消済みとしてマーク\n"
             f"  git commit             ← マージを完了"
         )
         return (output, False, state)

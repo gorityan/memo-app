@@ -70,7 +70,11 @@ export function LessonPanel({
 
       {/* Current lesson */}
       <div style={{ flex: 1, overflowY: "auto", padding: "14px" }}>
-        {lesson && (
+        {lessons.length === 0 ? (
+          <div style={{ color: "#8b949e", fontSize: 12, marginTop: 20 }}>
+            レッスンを読込中...
+          </div>
+        ) : lesson ? (
           <>
             <div
               style={{
@@ -184,6 +188,10 @@ export function LessonPanel({
               );
             })}
           </>
+        ) : (
+          <div style={{ color: "#8b949e", fontSize: 12, marginTop: 20 }}>
+            レッスンが見つかりません
+          </div>
         )}
       </div>
     </div>
