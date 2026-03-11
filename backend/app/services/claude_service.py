@@ -1,7 +1,8 @@
 import os
-from anthropic import Anthropic
+import google.generativeai as genai
 
-client = Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
+genai.configure(api_key=os.environ.get("GEMINI_API_KEY", ""))
+model = genai.GenerativeModel("gemini-1.5-flash")
 
 SYSTEM_PROMPT = (
     "あなたはGitを教える先生です。初心者向けに日本語で分かりやすく説明してください。"
@@ -10,34 +11,20 @@ SYSTEM_PROMPT = (
 
 
 def get_hint(instruction: str, expected_command_prefix: str) -> str:
-    message = client.messages.create(
-        model="claude-opus-4-6",
-        max_tokens=300,
-        system=SYSTEM_PROMPT,
-        messages=[
-            {
-                "role": "user",
-                "content": (
-                    f"課題: {instruction}\n"
-                    f"期待されるコマンドの種類: {expected_command_prefix}\n"
-                    "答えを直接教えずに、ヒントだけ教えてください。"
-                ),
-            }
-        ],
+    prompt = (
+        f"{SYSTEM_PROMPT}\n\n"
+        f"課題: {instruction}\n"
+        f"期待されるコマンドの種類: {expected_command_prefix}\n"
+        "答えを直接教えずに、ヒントだけ教えてください。"
     )
-    return message.content[0].text
+    response = model.generate_content(prompt)
+    return response.text
 
 
 def explain_command(command: str) -> str:
-    message = client.messages.create(
-        model="claude-opus-4-6",
-        max_tokens=400,
-        system=SYSTEM_PROMPT,
-        messages=[
-            {
-                "role": "user",
-                "content": f"このgitコマンドを初心者向けに説明してください: `{command}`",
-            }
-        ],
+    prompt = (
+        f"{SYSTEM_PROMPT}\n\n"
+        f"このgitコマンドを初心者向けに説明してください: `{command}`"
     )
-    return message.content[0].text
+    response = model.generate_content(prompt)
+    return response.text
