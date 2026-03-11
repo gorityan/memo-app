@@ -90,10 +90,10 @@ LESSONS: List[Lesson] = [
         steps=[
             LessonStep(
                 id=1,
-                instruction="`git switch main` または `git checkout main` でmainブランチに戻りましょう",
+                instruction="`git switch main` でmainブランチに戻りましょう",
                 hint="git switch main を使います",
                 expected_command_prefix="git",
-                explanation="マージするにはまず統合先のブランチ(main)に切り替えます。",
+                explanation="マージするにはまず統合先のブランチ(main)に切り替えます。作業中のブランチから離れてmainに戻ります。",
                 adds_files=[],
             ),
             LessonStep(
@@ -101,7 +101,7 @@ LESSONS: List[Lesson] = [
                 instruction="`git merge feature` でfeatureブランチをmainにマージしましょう",
                 hint="git merge の後にマージしたいブランチ名を指定します",
                 expected_command_prefix="git merge",
-                explanation="`git merge` で別ブランチの変更を現在のブランチに統合します。",
+                explanation="`git merge` で別ブランチの変更を現在のブランチに統合します。featureの変更がmainに取り込まれます。",
                 adds_files=[],
             ),
             LessonStep(
@@ -109,7 +109,60 @@ LESSONS: List[Lesson] = [
                 instruction="`git log --oneline` でコミット履歴を確認しましょう",
                 hint="git log --oneline を使います",
                 expected_command_prefix="git log",
-                explanation="`git log` でコミット履歴を表示します。`--oneline` で簡潔に表示できます。",
+                explanation="`git log` でコミット履歴を表示します。`--oneline` オプションで1行ずつ簡潔に表示できます。",
+                adds_files=[],
+            ),
+        ],
+    ),
+    Lesson(
+        id=4,
+        title="コンフリクトを解消しよう",
+        description="マージ時の競合（コンフリクト）の仕組みと解消方法を学ぶ",
+        steps=[
+            LessonStep(
+                id=1,
+                instruction="コンフリクトとは？`git branch hotfix` でhotfixブランチを作成しましょう",
+                hint="git branch hotfix を入力します",
+                expected_command_prefix="git branch",
+                explanation=(
+                    "コンフリクト（競合）とは、2つのブランチで同じファイルの同じ箇所を別々に編集したときに発生します。"
+                    "まず `git branch hotfix` で新しいブランチを作ります。"
+                ),
+                adds_files=[],
+            ),
+            LessonStep(
+                id=2,
+                instruction="`git switch hotfix` でhotfixブランチに切り替えましょう",
+                hint="git switch hotfix を使います",
+                expected_command_prefix="git",
+                explanation="hotfixブランチに切り替えます。このブランチでmainと競合する変更を加えていきます。",
+                adds_files=["conflict.txt"],
+            ),
+            LessonStep(
+                id=3,
+                instruction="`git add conflict.txt` でファイルをステージングしましょう",
+                hint="git add conflict.txt を使います",
+                expected_command_prefix="git add",
+                explanation="hotfixブランチでconflict.txtを編集しました。ステージングします。",
+                adds_files=[],
+            ),
+            LessonStep(
+                id=4,
+                instruction='`git commit -m "hotfix change"` でhotfixブランチにコミットしましょう',
+                hint='git commit -m "メッセージ" を使います',
+                expected_command_prefix="git commit",
+                explanation="hotfixブランチの変更を記録します。",
+                adds_files=[],
+            ),
+            LessonStep(
+                id=5,
+                instruction="`git switch main` でmainに戻り、`git merge hotfix` でマージしましょう",
+                hint="まず git switch main、次に git merge hotfix",
+                expected_command_prefix="git",
+                explanation=(
+                    "実際の現場ではコンフリクト発生時、ファイル内に `<<<<<<< HEAD` `=======` `>>>>>>> branch` という"
+                    "マーカーが挿入されます。そのマーカーを手動で編集して解消し、`git add` → `git commit` で完了です。"
+                ),
                 adds_files=[],
             ),
         ],
